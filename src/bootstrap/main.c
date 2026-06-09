@@ -6,6 +6,9 @@
 #include "lexer.h"
 #include "ast.h"
 #include "parser.h"
+#include "symbol_table.h"
+#include "typecheck.h"
+#include "codegen.h"
 
 static char *read_file(const char *path) {
     FILE *f = fopen(path, "rb");
@@ -27,76 +30,9 @@ static char *read_file(const char *path) {
     return buf;
 }
 
-static void print_ast(AstNode *node, int depth) {
-    if (!node) return;
-
-    for (int i = 0; i < depth; i++) printf("  ");
-
-    switch (node->kind) {
-        case NODE_PROGRAM:
-            printf("Program (%zu stmts)\n", node->data.program.stmt_count);
-            for (size_t i = 0; i < node->data.program.stmt_count; i++) {
-                print_ast(node->data.program.stmts[i], depth + 1);
-            }
-            break;
-        case NODE_FN_DECL:
-            printf("FnDecl(%s)\n", node->data.fn_decl.name);
-            for (size_t i = 0; i < node->data.fn_decl.param_count; i++) {
-                print_ast(node->data.fn_decl.params[i], depth + 1);
-            }
-            print_ast(node->data.fn_decl.body, depth + 1);
-            break;
-        case NODE_STRUCT_DECL:
-            printf("StructDecl(%s)\n", node->data.struct_decl.name);
-            for (size_t i = 0; i < node->data.struct_decl.field_count; i++) {
-                print_ast(node->data.struct_decl.fields[i], depth + 1);
-            }
-            break;
-        case NODE_ENUM_DECL:
-            printf("EnumDecl(%s)\n", node->data.enum_decl.name);
-            break;
-        case NODE_PACKET_DECL:
-            printf("PacketDecl(%s)\n", node->data.fn_decl.name);
-            break;
-        case NODE_IMPORT_DECL:
-            printf("ImportDecl\n");
-            break;
-        case NODE_BLOCK:
-            printf("Block (%zu stmts)\n", node->data.block.item_count);
-            for (size_t i = 0; i < node->data.block.item_count; i++) {
-                print_ast(node->data.block.items[i], depth + 1);
-            }
-            break;
-        case NODE_LET_STMT:
-            printf("Let(%s)\n", node->data.let_stmt.name);
-            break;
-        case NODE_RETURN_STMT:
-            printf("Return\n");
-            break;
-        case NODE_EXPR_STMT:
-            printf("ExprStmt\n");
-            break;
-        case NODE_BINARY_EXPR:
-            printf("Binary(%s)\n", token_kind_name(node->data.binary.op));
-            break;
-        case NODE_IDENTIFIER:
-            printf("Ident(%s)\n", node->data.identifier.name);
-            break;
-        case NODE_INT_LIT:
-            printf("IntLit(%.*s)\n", (int)node->data.int_lit.len, node->data.int_lit.value);
-            break;
-        case NODE_PARAM:
-            printf("Param(%s)\n", node->data.param.name);
-            break;
-        default:
-            printf("Node(%d)\n", node->kind);
-            break;
-    }
-}
-
 int main(int argc, char **argv) {
-    if (argc < 2) {
-        fprintf(stderr, "usage: nexus-bootstrap <source.nx>\n");
+    if (argc < 3) {
+        fprintf(stderr, "usage: nexus-bootstrap <source.nx> <output.c>\n");
         return 1;
     }
 
@@ -123,8 +59,40 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    printf("nexus-bootstrap: %s — parsed successfully\n", argv[1]);
-    print_ast(program, 0);
+    SymbolTable symbols;
+    symbol_table_init(&symbols, &arena);
+
+    TypeChecker tc;
+    typecheck_init(&tc, &arena, &strings, &symbols);
+
+    if (typecheck_program(&tc, program)) {
+        fprintf(stderr, "nexus-bootstrap: type errors in %s\n", argv[1]);
+        free(source);
+        arena_free(&arena);
+        return 1;
+    }
+
+    FILE *out = fopen(argv[2], "w");
+    if (!out) {
+        fprintf(stderr, "error: cannot open '%s' for writing\n", argv[2]);
+        free(source);
+        arena_free(&arena);
+        return 1;
+    }
+
+    CodeGen cg;
+    codegen_init(&cg, out, &arena, &strings);
+
+    if (codegen_program(&cg, program)) {
+        fprintf(stderr, "nexus-bootstrap: codegen errors in %s\n", argv[1]);
+        fclose(out);
+        free(source);
+        arena_free(&arena);
+        return 1;
+    }
+
+    fclose(out);
+    printf("nexus-bootstrap: %s -> %s\n", argv[1], argv[2]);
 
     free(source);
     arena_free(&arena);
