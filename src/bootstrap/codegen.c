@@ -9,7 +9,7 @@ static void codegen_indent(CodeGen *cg) {
 }
 
 static const char *codegen_type(AstNode *type_node) {
-    if (!type_node) return "int";
+    if (!type_node) return "void";
 
     switch (type_node->kind) {
         case NODE_TYPE_PATH:
@@ -20,14 +20,19 @@ static const char *codegen_type(AstNode *type_node) {
             if (strcmp(type_node->data.type_path.name, "f32") == 0) return "float";
             if (strcmp(type_node->data.type_path.name, "f64") == 0) return "double";
             if (strcmp(type_node->data.type_path.name, "bool") == 0) return "int";
-            if (strcmp(type_node->data.type_path.name, "string") == 0) return "const char*";
+            if (strcmp(type_node->data.type_path.name, "string") == 0) return "NexusString";
             if (strcmp(type_node->data.type_path.name, "char") == 0) return "char";
             if (strcmp(type_node->data.type_path.name, "nil") == 0) return "int";
+            if (strcmp(type_node->data.type_path.name, "void") == 0) return "void";
             return type_node->data.type_path.name;
         case NODE_TYPE_PTR:
             return "void*";
         case NODE_TYPE_REF:
-            return "const void*";
+            return codegen_type(type_node->data.type_ref.referent);
+        case NODE_TYPE_MUT_REF:
+            return codegen_type(type_node->data.type_mut_ref.inner);
+        case NODE_TYPE_OWN:
+            return codegen_type(type_node->data.type_own.inner);
         case NODE_TYPE_SLICE:
             return "void*";
         case NODE_TYPE_ARRAY:
@@ -63,8 +68,13 @@ static void codegen_statement_no_indent(CodeGen *cg, AstNode *node) {
     if (!node) return;
 
     switch (node->kind) {
-        case NODE_FN_DECL:
-            fprintf(cg->output, "%s %s(", codegen_type(node->data.fn_decl.return_type), node->data.fn_decl.name);
+        case NODE_FN_DECL: {
+            const char *ret_type = codegen_type(node->data.fn_decl.return_type);
+            if (!node->data.fn_decl.return_type &&
+                strcmp(node->data.fn_decl.name, "main") == 0) {
+                ret_type = "int";
+            }
+            fprintf(cg->output, "%s %s(", ret_type, node->data.fn_decl.name);
             for (size_t i = 0; i < node->data.fn_decl.param_count; i++) {
                 if (i > 0) fprintf(cg->output, ", ");
                 AstNode *param = node->data.fn_decl.params[i];
@@ -74,6 +84,7 @@ static void codegen_statement_no_indent(CodeGen *cg, AstNode *node) {
             codegen_block(cg, node->data.fn_decl.body);
             fprintf(cg->output, "\n\n");
             break;
+        }
         case NODE_STRUCT_DECL:
             fprintf(cg->output, "typedef struct {\n");
             cg->indent++;
@@ -106,6 +117,19 @@ static void codegen_statement_no_indent(CodeGen *cg, AstNode *node) {
             codegen_statement(cg, node);
             break;
     }
+}
+
+static int is_string_type(AstNode *type_node) {
+    if (!type_node) return 0;
+    if (type_node->kind == NODE_TYPE_PATH && strcmp(type_node->data.type_path.name, "string") == 0)
+        return 1;
+    if (type_node->kind == NODE_TYPE_OWN)
+        return is_string_type(type_node->data.type_own.inner);
+    if (type_node->kind == NODE_TYPE_REF)
+        return is_string_type(type_node->data.type_ref.referent);
+    if (type_node->kind == NODE_TYPE_MUT_REF)
+        return is_string_type(type_node->data.type_mut_ref.inner);
+    return 0;
 }
 
 static void codegen_expression(CodeGen *cg, AstNode *node) {
@@ -141,8 +165,12 @@ static void codegen_expression(CodeGen *cg, AstNode *node) {
             fprintf(cg->output, ")");
             break;
         case NODE_UNARY_EXPR:
-            fprintf(cg->output, "%s", token_kind_name(node->data.unary.op));
-            codegen_expression(cg, node->data.unary.operand);
+            if (node->data.unary.op == TOKEN_AMP || node->data.unary.op == TOKEN_MUT) {
+                codegen_expression(cg, node->data.unary.operand);
+            } else {
+                fprintf(cg->output, "%s", token_kind_name(node->data.unary.op));
+                codegen_expression(cg, node->data.unary.operand);
+            }
             break;
         case NODE_CALL_EXPR: {
             if (node->data.call.callee->kind == NODE_IDENTIFIER) {
@@ -151,12 +179,9 @@ static void codegen_expression(CodeGen *cg, AstNode *node) {
                 if (strcmp(name, "print") == 0) {
                     if (node->data.call.arg_count > 0) {
                         AstNode *arg = node->data.call.args[0];
-                        if (arg->kind == NODE_STRING_LIT) {
+                        int is_string = (arg->kind == NODE_STRING_LIT) || is_string_type(arg->type_node);
+                        if (is_string) {
                             fprintf(cg->output, "nexus_print(");
-                            codegen_expression(cg, arg);
-                            fprintf(cg->output, ")");
-                        } else if (arg->kind == NODE_INT_LIT || arg->kind == NODE_IDENTIFIER) {
-                            fprintf(cg->output, "nexus_print_int(");
                             codegen_expression(cg, arg);
                             fprintf(cg->output, ")");
                         } else {
@@ -171,12 +196,9 @@ static void codegen_expression(CodeGen *cg, AstNode *node) {
                 if (strcmp(name, "println") == 0) {
                     if (node->data.call.arg_count > 0) {
                         AstNode *arg = node->data.call.args[0];
-                        if (arg->kind == NODE_STRING_LIT) {
+                        int is_string = (arg->kind == NODE_STRING_LIT) || is_string_type(arg->type_node);
+                        if (is_string) {
                             fprintf(cg->output, "nexus_println(");
-                            codegen_expression(cg, arg);
-                            fprintf(cg->output, ")");
-                        } else if (arg->kind == NODE_INT_LIT || arg->kind == NODE_IDENTIFIER) {
-                            fprintf(cg->output, "nexus_println_int(");
                             codegen_expression(cg, arg);
                             fprintf(cg->output, ")");
                         } else {
@@ -270,15 +292,20 @@ static void codegen_statement(CodeGen *cg, AstNode *node) {
     if (!node) return;
 
     switch (node->kind) {
-        case NODE_LET_STMT:
+        case NODE_LET_STMT: {
             codegen_indent(cg);
-            fprintf(cg->output, "%s %s", codegen_type(node->data.let_stmt.type), node->data.let_stmt.name);
+            AstNode *var_type = node->data.let_stmt.type;
+            if (!var_type && node->data.let_stmt.init) {
+                var_type = node->data.let_stmt.init->type_node;
+            }
+            fprintf(cg->output, "%s %s", codegen_type(var_type), node->data.let_stmt.name);
             if (node->data.let_stmt.init) {
                 fprintf(cg->output, " = ");
                 codegen_expression(cg, node->data.let_stmt.init);
             }
             fprintf(cg->output, ";\n");
             break;
+        }
         case NODE_RETURN_STMT:
             codegen_indent(cg);
             fprintf(cg->output, "return");
@@ -288,9 +315,14 @@ static void codegen_statement(CodeGen *cg, AstNode *node) {
             }
             fprintf(cg->output, ";\n");
             break;
-        case NODE_FN_DECL:
+        case NODE_FN_DECL: {
             codegen_indent(cg);
-            fprintf(cg->output, "%s %s(", codegen_type(node->data.fn_decl.return_type), node->data.fn_decl.name);
+            const char *ret_type = codegen_type(node->data.fn_decl.return_type);
+            if (!node->data.fn_decl.return_type &&
+                strcmp(node->data.fn_decl.name, "main") == 0) {
+                ret_type = "int";
+            }
+            fprintf(cg->output, "%s %s(", ret_type, node->data.fn_decl.name);
             for (size_t i = 0; i < node->data.fn_decl.param_count; i++) {
                 if (i > 0) fprintf(cg->output, ", ");
                 AstNode *param = node->data.fn_decl.params[i];
@@ -300,6 +332,7 @@ static void codegen_statement(CodeGen *cg, AstNode *node) {
             codegen_block(cg, node->data.fn_decl.body);
             fprintf(cg->output, "\n\n");
             break;
+        }
         case NODE_STRUCT_DECL:
             codegen_indent(cg);
             fprintf(cg->output, "typedef struct {\n");

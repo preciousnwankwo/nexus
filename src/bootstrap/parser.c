@@ -112,6 +112,24 @@ AstNode *parse_unary(Parser *p) {
         return ast_new_unary(t.kind, operand, p->arena);
     }
 
+    if (t.kind == TOKEN_AMP) {
+        parser_advance(p);
+        if (parser_match(p, TOKEN_MUT)) {
+            AstNode *operand = parse_unary(p);
+            AstNode *node = ast_new(NODE_UNARY_EXPR, p->arena);
+            node->data.unary.op = TOKEN_MUT;
+            node->data.unary.operand = operand;
+            node->loc = t.loc;
+            return node;
+        }
+        AstNode *operand = parse_unary(p);
+        AstNode *node = ast_new(NODE_UNARY_EXPR, p->arena);
+        node->data.unary.op = TOKEN_AMP;
+        node->data.unary.operand = operand;
+        node->loc = t.loc;
+        return node;
+    }
+
     return parse_primary(p);
 }
 
@@ -342,6 +360,15 @@ AstNode *parse_index(Parser *p, AstNode *collection) {
 AstNode *parse_type(Parser *p) {
     Token t = parser_peek(p);
 
+    if (t.kind == TOKEN_OWN) {
+        parser_advance(p);
+        AstNode *inner = parse_type(p);
+        AstNode *node = ast_new(NODE_TYPE_OWN, p->arena);
+        node->data.type_own.inner = inner;
+        node->loc = t.loc;
+        return node;
+    }
+
     if (t.kind == TOKEN_STAR) {
         parser_advance(p);
         AstNode *inner = parse_type(p);
@@ -353,6 +380,13 @@ AstNode *parse_type(Parser *p) {
 
     if (t.kind == TOKEN_AMP) {
         parser_advance(p);
+        if (parser_match(p, TOKEN_MUT)) {
+            AstNode *inner = parse_type(p);
+            AstNode *node = ast_new(NODE_TYPE_MUT_REF, p->arena);
+            node->data.type_mut_ref.inner = inner;
+            node->loc = t.loc;
+            return node;
+        }
         AstNode *inner = parse_type(p);
         AstNode *node = ast_new(NODE_TYPE_REF, p->arena);
         node->data.type_ref.referent = inner;
@@ -629,9 +663,21 @@ AstNode *parse_block(Parser *p) {
 }
 
 AstNode *parse_param(Parser *p) {
+    int is_own = 0;
+    if (parser_match(p, TOKEN_OWN)) {
+        is_own = 1;
+    }
+
     Token name = parser_expect(p, TOKEN_IDENT);
     parser_expect(p, TOKEN_COLON);
     AstNode *type = parse_type(p);
+
+    if (is_own) {
+        AstNode *own_type = ast_new(NODE_TYPE_OWN, p->arena);
+        own_type->data.type_own.inner = type;
+        own_type->loc = name.loc;
+        type = own_type;
+    }
 
     AstNode *node = ast_new(NODE_PARAM, p->arena);
     node->data.param.name = name.value;

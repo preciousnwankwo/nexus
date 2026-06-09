@@ -21,6 +21,10 @@ static int types_match(AstNode *a, AstNode *b) {
             return types_match(a->data.type_ptr.pointee, b->data.type_ptr.pointee);
         case NODE_TYPE_REF:
             return types_match(a->data.type_ref.referent, b->data.type_ref.referent);
+        case NODE_TYPE_MUT_REF:
+            return types_match(a->data.type_mut_ref.inner, b->data.type_mut_ref.inner);
+        case NODE_TYPE_OWN:
+            return types_match(a->data.type_own.inner, b->data.type_own.inner);
         default:
             return 1;
     }
@@ -42,41 +46,50 @@ static void typecheck_block(TypeChecker *tc, AstNode *block) {
 static AstNode *typecheck_expression(TypeChecker *tc, AstNode *node) {
     if (!node) return NULL;
 
+    AstNode *result = NULL;
+
     switch (node->kind) {
         case NODE_INT_LIT: {
             AstNode *type = arena_alloc_zero(tc->arena, sizeof(AstNode));
             type->kind = NODE_TYPE_PATH;
             type->data.type_path.name = "i32";
-            return type;
+            result = type;
+            break;
         }
         case NODE_FLOAT_LIT: {
             AstNode *type = arena_alloc_zero(tc->arena, sizeof(AstNode));
             type->kind = NODE_TYPE_PATH;
             type->data.type_path.name = "f64";
-            return type;
+            result = type;
+            break;
         }
         case NODE_STRING_LIT: {
             AstNode *type = arena_alloc_zero(tc->arena, sizeof(AstNode));
             type->kind = NODE_TYPE_PATH;
             type->data.type_path.name = "string";
-            return type;
+            result = type;
+            break;
         }
         case NODE_BOOL_LIT: {
             AstNode *type = arena_alloc_zero(tc->arena, sizeof(AstNode));
             type->kind = NODE_TYPE_PATH;
             type->data.type_path.name = "bool";
-            return type;
+            result = type;
+            break;
         }
         case NODE_NIL_LIT: {
-            return NULL;
+            result = NULL;
+            break;
         }
         case NODE_IDENTIFIER: {
             Symbol *sym = symbol_lookup(tc->symbols, node->data.identifier.name);
             if (!sym) {
                 typecheck_error(tc, node, "undefined variable");
-                return NULL;
+                result = NULL;
+                break;
             }
-            return sym->type_node;
+            result = sym->type_node;
+            break;
         }
         case NODE_BINARY_EXPR: {
             AstNode *left_type = typecheck_expression(tc, node->data.binary.left);
@@ -84,21 +97,30 @@ static AstNode *typecheck_expression(TypeChecker *tc, AstNode *node) {
             if (left_type && right_type && !types_match(left_type, right_type)) {
                 typecheck_error(tc, node, "type mismatch in binary expression");
             }
-            return left_type;
+            result = left_type;
+            break;
         }
         case NODE_UNARY_EXPR: {
-            return typecheck_expression(tc, node->data.unary.operand);
+            result = typecheck_expression(tc, node->data.unary.operand);
+            break;
         }
         case NODE_CALL_EXPR: {
+            // Typecheck all arguments first
+            for (size_t i = 0; i < node->data.call.arg_count; i++) {
+                typecheck_expression(tc, node->data.call.args[i]);
+            }
             if (node->data.call.callee->kind == NODE_IDENTIFIER) {
                 Symbol *sym = symbol_lookup(tc->symbols, node->data.call.callee->data.identifier.name);
                 if (!sym) {
                     typecheck_error(tc, node, "undefined function");
-                    return NULL;
+                    result = NULL;
+                    break;
                 }
-                return sym->type_node;
+                result = sym->type_node;
+                break;
             }
-            return NULL;
+            result = NULL;
+            break;
         }
         case NODE_IF_EXPR: {
             typecheck_expression(tc, node->data.if_expr.cond);
@@ -110,7 +132,27 @@ static AstNode *typecheck_expression(TypeChecker *tc, AstNode *node) {
                     typecheck_expression(tc, node->data.if_expr.else_block);
                 }
             }
-            return NULL;
+            result = NULL;
+            break;
+        }
+        case NODE_WHILE_EXPR: {
+            typecheck_expression(tc, node->data.while_expr.cond);
+            typecheck_block(tc, node->data.while_expr.body);
+            result = NULL;
+            break;
+        }
+        case NODE_FOR_EXPR: {
+            AstNode *i32_type = arena_alloc_zero(tc->arena, sizeof(AstNode));
+            i32_type->kind = NODE_TYPE_PATH;
+            i32_type->data.type_path.name = "i32";
+            scope_push(tc->symbols);
+            symbol_define(tc->symbols, node->data.for_expr.var,
+                         SYM_VARIABLE, i32_type, NULL, 0);
+            typecheck_expression(tc, node->data.for_expr.iter);
+            typecheck_block(tc, node->data.for_expr.body);
+            scope_pop(tc->symbols);
+            result = NULL;
+            break;
         }
         case NODE_MATCH_EXPR: {
             typecheck_expression(tc, node->data.match_expr.value);
@@ -121,11 +163,17 @@ static AstNode *typecheck_expression(TypeChecker *tc, AstNode *node) {
                 typecheck_expression(tc, arm->data.match_arm.body);
                 scope_pop(tc->symbols);
             }
-            return NULL;
+            result = NULL;
+            break;
         }
-        default:
-            return NULL;
+        default: {
+            result = NULL;
+            break;
+        }
     }
+
+    node->type_node = result;
+    return result;
 }
 
 static void typecheck_statement(TypeChecker *tc, AstNode *node) {
@@ -144,6 +192,7 @@ static void typecheck_statement(TypeChecker *tc, AstNode *node) {
             }
 
             if (!var_type) var_type = init_type;
+            node->type_node = var_type;
 
             symbol_define(tc->symbols, node->data.let_stmt.name,
                          SYM_VARIABLE, var_type, node, node->data.let_stmt.is_mut);

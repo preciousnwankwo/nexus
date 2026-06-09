@@ -47,6 +47,8 @@ typedef enum {
     NODE_TYPE_PATH,
     NODE_TYPE_PTR,
     NODE_TYPE_REF,
+    NODE_TYPE_MUT_REF,
+    NODE_TYPE_OWN,
     NODE_TYPE_ARRAY,
     NODE_TYPE_SLICE,
     NODE_TYPE_FN,
@@ -68,6 +70,7 @@ typedef enum {
 typedef struct AstNode {
     NodeKind kind;
     SourceLocation loc;
+    struct AstNode *type_node;  // inferred type during typechecking
     union {
         struct {
             struct AstNode **stmts;
@@ -235,6 +238,14 @@ typedef struct AstNode {
         struct {
             struct AstNode *referent;
         } type_ref;
+
+        struct {
+            struct AstNode *inner;
+        } type_own;
+
+        struct {
+            struct AstNode *inner;
+        } type_mut_ref;
 
         struct {
             struct AstNode *element_type;

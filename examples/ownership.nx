@@ -1,0 +1,24 @@
+// Nexus ownership example
+fn take_ownership(own data: string) {
+    println(data)
+}
+
+fn borrow_data(data: &string) {
+    println(data)
+}
+
+fn modify_data(data: &mut string) {
+    println(data)
+}
+
+fn create_string() -> string {
+    return "Hello from Nexus!"
+}
+
+fn main() {
+    let s = create_string()
+    borrow_data(&s)
+    modify_data(&mut s)
+    take_ownership(s)
+    return 0
+}
