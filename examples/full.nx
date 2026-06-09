@@ -1,0 +1,30 @@
+packet main {
+    import io
+}
+
+struct Vector {
+    x: f64
+    y: f64
+    z: f64
+}
+
+enum Option {
+    Some(value: i32)
+    None
+}
+
+fn add(a: i32, b: i32) -> i32 {
+    return a + b
+}
+
+fn fibonacci(n: i32) -> i32 {
+    if n <= 1 {
+        return n
+    }
+    return fibonacci(n - 1) + fibonacci(n - 2)
+}
+
+fn process(data: i32) -> i32 {
+    let parsed = data
+    return parsed
+}
