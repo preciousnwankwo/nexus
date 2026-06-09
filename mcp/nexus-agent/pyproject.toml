@@ -1,0 +1,12 @@
+[project]
+name = "nexus-planner"
+version = "0.1.0"
+description = "MCP agent for the Nexus programming language project"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp[cli]",
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.backends._legacy:_Backend"
