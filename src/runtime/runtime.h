@@ -33,6 +33,10 @@ void nexus_print(NexusString s);
 void nexus_println(NexusString s);
 void nexus_eprintln(NexusString s);
 void nexus_panic(NexusString msg);
+void nexus_print_int(int n);
+void nexus_println_int(int n);
+void nexus_print_float(double f);
+void nexus_println_float(double f);
 
 NexusSlice nexus_slice_new(size_t elem_size, size_t capacity);
 void nexus_slice_free(NexusSlice *s);

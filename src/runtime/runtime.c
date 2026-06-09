@@ -54,6 +54,22 @@ void nexus_panic(NexusString msg) {
     exit(1);
 }
 
+void nexus_print_int(int n) {
+    printf("%d", n);
+}
+
+void nexus_println_int(int n) {
+    printf("%d\n", n);
+}
+
+void nexus_print_float(double f) {
+    printf("%g", f);
+}
+
+void nexus_println_float(double f) {
+    printf("%g\n", f);
+}
+
 NexusSlice nexus_slice_new(size_t elem_size, size_t capacity) {
     NexusSlice s;
     s.elem_size = elem_size;

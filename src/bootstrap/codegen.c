@@ -119,7 +119,7 @@ static void codegen_expression(CodeGen *cg, AstNode *node) {
             fprintf(cg->output, "%.*s", (int)node->data.float_lit.len, node->data.float_lit.value);
             break;
         case NODE_STRING_LIT:
-            fprintf(cg->output, "\"%.*s\"", (int)node->data.string_lit.len, node->data.string_lit.value);
+            fprintf(cg->output, "nexus_string_new(\"%.*s\")", (int)node->data.string_lit.len, node->data.string_lit.value);
             break;
         case NODE_CHAR_LIT:
             fprintf(cg->output, "'%c'", node->data.char_lit.value);
@@ -144,7 +144,71 @@ static void codegen_expression(CodeGen *cg, AstNode *node) {
             fprintf(cg->output, "%s", token_kind_name(node->data.unary.op));
             codegen_expression(cg, node->data.unary.operand);
             break;
-        case NODE_CALL_EXPR:
+        case NODE_CALL_EXPR: {
+            if (node->data.call.callee->kind == NODE_IDENTIFIER) {
+                const char *name = node->data.call.callee->data.identifier.name;
+
+                if (strcmp(name, "print") == 0) {
+                    if (node->data.call.arg_count > 0) {
+                        AstNode *arg = node->data.call.args[0];
+                        if (arg->kind == NODE_STRING_LIT) {
+                            fprintf(cg->output, "nexus_print(");
+                            codegen_expression(cg, arg);
+                            fprintf(cg->output, ")");
+                        } else if (arg->kind == NODE_INT_LIT || arg->kind == NODE_IDENTIFIER) {
+                            fprintf(cg->output, "nexus_print_int(");
+                            codegen_expression(cg, arg);
+                            fprintf(cg->output, ")");
+                        } else {
+                            fprintf(cg->output, "nexus_print_int(");
+                            codegen_expression(cg, arg);
+                            fprintf(cg->output, ")");
+                        }
+                    }
+                    break;
+                }
+
+                if (strcmp(name, "println") == 0) {
+                    if (node->data.call.arg_count > 0) {
+                        AstNode *arg = node->data.call.args[0];
+                        if (arg->kind == NODE_STRING_LIT) {
+                            fprintf(cg->output, "nexus_println(");
+                            codegen_expression(cg, arg);
+                            fprintf(cg->output, ")");
+                        } else if (arg->kind == NODE_INT_LIT || arg->kind == NODE_IDENTIFIER) {
+                            fprintf(cg->output, "nexus_println_int(");
+                            codegen_expression(cg, arg);
+                            fprintf(cg->output, ")");
+                        } else {
+                            fprintf(cg->output, "nexus_println_int(");
+                            codegen_expression(cg, arg);
+                            fprintf(cg->output, ")");
+                        }
+                    }
+                    break;
+                }
+
+                if (strcmp(name, "eprintln") == 0) {
+                    fprintf(cg->output, "nexus_eprintln(");
+                    for (size_t i = 0; i < node->data.call.arg_count; i++) {
+                        if (i > 0) fprintf(cg->output, ", ");
+                        codegen_expression(cg, node->data.call.args[i]);
+                    }
+                    fprintf(cg->output, ")");
+                    break;
+                }
+
+                if (strcmp(name, "panic") == 0) {
+                    fprintf(cg->output, "nexus_panic(");
+                    for (size_t i = 0; i < node->data.call.arg_count; i++) {
+                        if (i > 0) fprintf(cg->output, ", ");
+                        codegen_expression(cg, node->data.call.args[i]);
+                    }
+                    fprintf(cg->output, ")");
+                    break;
+                }
+            }
+
             codegen_expression(cg, node->data.call.callee);
             fprintf(cg->output, "(");
             for (size_t i = 0; i < node->data.call.arg_count; i++) {
@@ -153,6 +217,7 @@ static void codegen_expression(CodeGen *cg, AstNode *node) {
             }
             fprintf(cg->output, ")");
             break;
+        }
         case NODE_INDEX_EXPR:
             codegen_expression(cg, node->data.index_expr.collection);
             fprintf(cg->output, "[");
@@ -176,6 +241,24 @@ static void codegen_expression(CodeGen *cg, AstNode *node) {
                     codegen_block(cg, node->data.if_expr.else_block);
                 }
             }
+            break;
+        case NODE_WHILE_EXPR:
+            fprintf(cg->output, "while (");
+            codegen_expression(cg, node->data.while_expr.cond);
+            fprintf(cg->output, ") ");
+            codegen_block(cg, node->data.while_expr.body);
+            break;
+        case NODE_FOR_EXPR:
+            fprintf(cg->output, "for (int %s = 0; %s < ", node->data.for_expr.var, node->data.for_expr.var);
+            codegen_expression(cg, node->data.for_expr.iter);
+            fprintf(cg->output, "; %s++) ", node->data.for_expr.var);
+            codegen_block(cg, node->data.for_expr.body);
+            break;
+        case NODE_BREAK_EXPR:
+            fprintf(cg->output, "break");
+            break;
+        case NODE_CONTINUE_EXPR:
+            fprintf(cg->output, "continue");
             break;
         default:
             fprintf(cg->output, "/* TODO: %d */", node->kind);
@@ -251,6 +334,13 @@ static void codegen_statement(CodeGen *cg, AstNode *node) {
             for (size_t i = 0; i < node->data.fn_decl.param_count; i++) {
                 codegen_statement(cg, node->data.fn_decl.params[i]);
             }
+            break;
+        case NODE_ASSIGN:
+            codegen_indent(cg);
+            codegen_expression(cg, node->data.assign.target);
+            fprintf(cg->output, " = ");
+            codegen_expression(cg, node->data.assign.value);
+            fprintf(cg->output, ";\n");
             break;
         case NODE_IMPORT_DECL:
             break;

@@ -15,6 +15,10 @@ static Token parser_peek(Parser *p) {
     return p->lexer->current;
 }
 
+static Token parser_peek_next(Parser *p) {
+    return lexer_peek(p->lexer);
+}
+
 static Token parser_advance(Parser *p) {
     return lexer_next(p->lexer);
 }
@@ -69,6 +73,17 @@ void parser_init(Parser *p, Lexer *lex, Arena *arena, StringTable *strings) {
 
 AstNode *parse_expression(Parser *p) {
     return parse_binary(p, 0);
+}
+
+static AstNode *parse_assignment(Parser *p, AstNode *target) {
+    Token eq = parser_expect(p, TOKEN_EQ);
+    AstNode *value = parse_expression(p);
+
+    AstNode *node = ast_new(NODE_ASSIGN, p->arena);
+    node->data.assign.target = target;
+    node->data.assign.value = value;
+    node->loc = eq.loc;
+    return node;
 }
 
 AstNode *parse_binary(Parser *p, int min_prec) {
@@ -198,6 +213,20 @@ AstNode *parse_primary(Parser *p) {
         }
         case TOKEN_MATCH: {
             return parse_match_expr(p);
+        }
+        case TOKEN_WHILE: {
+            return parse_while_expr(p);
+        }
+        case TOKEN_FOR: {
+            return parse_for_expr(p);
+        }
+        case TOKEN_BREAK: {
+            parser_advance(p);
+            return ast_new(NODE_BREAK_EXPR, p->arena);
+        }
+        case TOKEN_CONTINUE: {
+            parser_advance(p);
+            return ast_new(NODE_CONTINUE_EXPR, p->arena);
         }
         case TOKEN_UNSAFE: {
             parser_advance(p);
@@ -504,6 +533,33 @@ AstNode *parse_if_expr(Parser *p) {
     return node;
 }
 
+AstNode *parse_while_expr(Parser *p) {
+    Token t = parser_expect(p, TOKEN_WHILE);
+    AstNode *cond = parse_expression(p);
+    AstNode *body = parse_block(p);
+
+    AstNode *node = ast_new(NODE_WHILE_EXPR, p->arena);
+    node->data.while_expr.cond = cond;
+    node->data.while_expr.body = body;
+    node->loc = t.loc;
+    return node;
+}
+
+AstNode *parse_for_expr(Parser *p) {
+    Token t = parser_expect(p, TOKEN_FOR);
+    Token var = parser_expect(p, TOKEN_IDENT);
+    parser_expect(p, TOKEN_IN);
+    AstNode *iter = parse_expression(p);
+    AstNode *body = parse_block(p);
+
+    AstNode *node = ast_new(NODE_FOR_EXPR, p->arena);
+    node->data.for_expr.var = var.value;
+    node->data.for_expr.iter = iter;
+    node->data.for_expr.body = body;
+    node->loc = t.loc;
+    return node;
+}
+
 AstNode *parse_match_arm(Parser *p) {
     AstNode *pattern = parse_expression(p);
     parser_expect(p, TOKEN_FAT_ARROW);
@@ -786,6 +842,20 @@ AstNode *parse_statement(Parser *p) {
         case TOKEN_ENUM: return parse_enum_decl(p);
         case TOKEN_IMPORT: return parse_import_decl(p);
         case TOKEN_PACKET: return parse_packet_decl(p);
+        case TOKEN_IDENT: {
+            Token next = parser_peek_next(p);
+            if (next.kind == TOKEN_EQ) {
+                parser_advance(p);
+                AstNode *target = ast_new_identifier(t.value, p->arena);
+                target->loc = t.loc;
+                return parse_assignment(p, target);
+            }
+            AstNode *expr = parse_expression(p);
+            AstNode *node = ast_new(NODE_EXPR_STMT, p->arena);
+            node->data.expr_stmt.expr = expr;
+            node->loc = t.loc;
+            return node;
+        }
         default: {
             AstNode *expr = parse_expression(p);
             AstNode *node = ast_new(NODE_EXPR_STMT, p->arena);

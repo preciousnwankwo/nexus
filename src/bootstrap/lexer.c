@@ -73,6 +73,8 @@ static TokenKind check_keyword(const char *str, size_t len) {
         {"agent", 5, TOKEN_AGENT}, {"unsafe", 6, TOKEN_UNSAFE}, {"arena", 5, TOKEN_ARENA},
         {"own", 3, TOKEN_OWN}, {"borrow", 6, TOKEN_BORROW}, {"ref", 3, TOKEN_REF},
         {"true", 4, TOKEN_TRUE}, {"false", 5, TOKEN_FALSE}, {"nil", 3, TOKEN_NIL},
+        {"while", 5, TOKEN_WHILE}, {"for", 3, TOKEN_FOR}, {"in", 2, TOKEN_IN},
+        {"break", 5, TOKEN_BREAK}, {"continue", 8, TOKEN_CONTINUE},
         {"and", 3, TOKEN_AND}, {"or", 2, TOKEN_OR}, {"not", 3, TOKEN_NOT},
         {"xor", 3, TOKEN_XOR}, {"shl", 3, TOKEN_SHL}, {"shr", 3, TOKEN_SHR},
         {"mod", 3, TOKEN_MOD}, {"as", 2, TOKEN_AS}, {"type", 4, TOKEN_TYPE},
@@ -444,6 +446,11 @@ const char *token_kind_name(TokenKind kind) {
         case TOKEN_TRUE: return "true";
         case TOKEN_FALSE: return "false";
         case TOKEN_NIL: return "nil";
+        case TOKEN_WHILE: return "while";
+        case TOKEN_FOR: return "for";
+        case TOKEN_IN: return "in";
+        case TOKEN_BREAK: return "break";
+        case TOKEN_CONTINUE: return "continue";
         case TOKEN_AND: return "and";
         case TOKEN_OR: return "or";
         case TOKEN_NOT: return "not";

@@ -30,6 +30,8 @@ AstNode *parse_packet_decl(Parser *p);
 AstNode *parse_let_stmt(Parser *p);
 AstNode *parse_return_stmt(Parser *p);
 AstNode *parse_if_expr(Parser *p);
+AstNode *parse_while_expr(Parser *p);
+AstNode *parse_for_expr(Parser *p);
 AstNode *parse_match_expr(Parser *p);
 
 AstNode *parse_binary(Parser *p, int min_prec);

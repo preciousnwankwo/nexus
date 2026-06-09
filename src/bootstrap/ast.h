@@ -18,6 +18,10 @@ typedef enum {
     NODE_EXPR_STMT,
 
     NODE_IF_EXPR,
+    NODE_WHILE_EXPR,
+    NODE_FOR_EXPR,
+    NODE_BREAK_EXPR,
+    NODE_CONTINUE_EXPR,
     NODE_MATCH_EXPR,
     NODE_MATCH_ARM,
 
@@ -27,6 +31,8 @@ typedef enum {
     NODE_INDEX_EXPR,
     NODE_FIELD_ACCESS,
     NODE_CAST_EXPR,
+    NODE_ASSIGN,
+    NODE_ASSIGN_FIELD,
 
     NODE_IDENTIFIER,
     NODE_INT_LIT,
@@ -115,6 +121,17 @@ typedef struct AstNode {
         } if_expr;
 
         struct {
+            struct AstNode *cond;
+            struct AstNode *body;
+        } while_expr;
+
+        struct {
+            const char *var;
+            struct AstNode *iter;
+            struct AstNode *body;
+        } for_expr;
+
+        struct {
             struct AstNode *value;
             struct AstNode **arms;
             size_t arm_count;
@@ -156,6 +173,17 @@ typedef struct AstNode {
             struct AstNode *value;
             struct AstNode *target_type;
         } cast_expr;
+
+        struct {
+            struct AstNode *target;
+            struct AstNode *value;
+        } assign;
+
+        struct {
+            struct AstNode *object;
+            const char *field;
+            struct AstNode *value;
+        } assign_field;
 
         struct {
             const char *name;

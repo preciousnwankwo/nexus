@@ -1,4 +1,4 @@
-// A simple Nexus program with runtime
+// Nexus example with print and loops
 fn fibonacci(n: i32) -> i32 {
     if n <= 1 {
         return n
@@ -7,6 +7,18 @@ fn fibonacci(n: i32) -> i32 {
 }
 
 fn main() {
-    let result = fibonacci(10)
-    return result
+    println("Fibonacci sequence:")
+    for i in 10 {
+        let result = fibonacci(i)
+        println(result)
+    }
+
+    let sum = 0
+    let n = 1
+    while n <= 10 {
+        sum = sum + n
+        n = n + 1
+    }
+    println("Sum = ")
+    println(sum)
 }

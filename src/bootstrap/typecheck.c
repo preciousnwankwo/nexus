@@ -209,6 +209,16 @@ void typecheck_init(TypeChecker *tc, Arena *arena, StringTable *strings, SymbolT
 }
 
 static void typecheck_forward_declare(TypeChecker *tc, AstNode *program) {
+    // Built-in functions
+    AstNode *void_type = arena_alloc_zero(tc->arena, sizeof(AstNode));
+    void_type->kind = NODE_TYPE_PATH;
+    void_type->data.type_path.name = "void";
+
+    symbol_define(tc->symbols, "println", SYM_FUNCTION, void_type, NULL, 0);
+    symbol_define(tc->symbols, "print", SYM_FUNCTION, void_type, NULL, 0);
+    symbol_define(tc->symbols, "eprintln", SYM_FUNCTION, void_type, NULL, 0);
+    symbol_define(tc->symbols, "panic", SYM_FUNCTION, void_type, NULL, 0);
+
     for (size_t i = 0; i < program->data.program.stmt_count; i++) {
         AstNode *node = program->data.program.stmts[i];
         if (node->kind == NODE_FN_DECL) {
