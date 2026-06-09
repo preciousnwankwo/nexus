@@ -20,6 +20,10 @@
 10. [Module System](#10-module-system)
 11. [Agent-Specific Syntax](#11-agent-specific-syntax)
 12. [Grammar Summary](#12-grammar-summary)
+13. [Ownership and Borrowing Rules](#13-ownership-and-borrowing-rules)
+14. [Lifetime Inference](#14-lifetime-inference)
+15. [Semantics](#15-semantics)
+16. [Runtime Specification](#16-runtime-specification)
 
 ---
 
@@ -2535,4 +2539,941 @@ program        = { declaration | statement | comment | whitespace } ;
 
 ---
 
-*End of Syntax Specification*
+## 13. Ownership and Borrowing Rules
+
+Nexus enforces memory safety at compile time through an ownership system. Every value has exactly one owner. When the owner goes out of scope, the value is dropped (deallocated). Borrowing allows temporary access without taking ownership.
+
+### 13.1 Ownership Rules
+
+**Rule 1: Every value has exactly one owner.**
+
+```
+let s = String::from("hello");  // s owns the String
+```
+
+**Rule 2: When the owner goes out of scope, the value is dropped.**
+
+```
+{
+    let s = String::from("hello");
+    // s is valid here
+}   // s goes out of scope; String is dropped (memory freed)
+// s is no longer valid
+```
+
+**Rule 3: Assignment moves ownership (unless the type is `Copy`).**
+
+```
+let a = String::from("hello");
+let b = a;          // ownership moves from a to b
+// a is no longer valid
+// b is valid
+```
+
+**Rule 4: Function arguments move ownership (unless borrowed).**
+
+```
+fn take(s: String) {
+    // s owns the String
+}   // s is dropped here
+
+let name = String::from("Nexus");
+take(name);         // ownership moves into take()
+// name is no longer valid
+```
+
+**Rule 5: Function return values transfer ownership to the caller.**
+
+```
+fn create() -> String {
+    let s = String::from("hello");
+    s               // ownership moves to caller
+}
+
+let s = create();   // s owns the String
+```
+
+### 13.2 Copy Types
+
+Some types are `Copy` — they are bitwise-copied on assignment instead of moved. A type is `Copy` if all its fields are `Copy`.
+
+**Built-in Copy types:**
+- All integer types: `u8`–`u128`, `i8`–`i128`
+- Float types: `f32`, `f64`
+- `bool`
+- `char`
+- Tuples of Copy types: `(i32, bool)` is `Copy`, `(i32, String)` is not
+- Fixed-size arrays of Copy types: `[i32; 5]` is `Copy`
+- References: `&T` and `&mut T` are `Copy` (the reference itself, not the referent)
+
+**Non-Copy types:**
+- `String`
+- `Vector<T>` (unless T is `Copy`)
+- `HashMap<K, V>`
+- Any type containing a non-Copy field
+
+```
+let a: i32 = 5;
+let b = a;          // a is copied; both a and b are valid
+println!("{a} {b}"); // works
+
+let x = String::from("hello");
+let y = x;          // x is moved; only y is valid
+// println!("{x}");  // ERROR: x is no longer valid
+```
+
+### 13.3 Move Semantics
+
+Moves transfer ownership from one binding to another. After a move, the source binding is invalidated.
+
+**Where moves happen:**
+- Assignment: `let b = a;`
+- Function argument: `func(a)`
+- Function return: `return a;`
+- Pattern matching: `let (x, y) = tuple;` (moves out of tuple)
+- Field access: `let name = user.name;` (moves field out of struct)
+
+**Move restrictions:**
+- You cannot use a value after it is moved
+- You cannot move a value that is borrowed
+- You cannot move individual fields out of a struct that is borrowed
+- You cannot move out of an index into a container (the container owns the elements)
+
+```
+let point = Point { x: 1.0, y: 2.0 };
+let x = point.x;     // moves x field out of point
+// point is partially moved; point.y is still accessible
+let y = point.y;     // moves y field
+// point is now fully moved
+```
+
+### 13.4 Borrowing Rules
+
+Borrowing allows you to refer to a value without taking ownership. There are two kinds of borrows:
+
+**Shared borrow (`&T`):**
+- Multiple shared borrows can coexist
+- No exclusive borrows can coexist with shared borrows
+- The referent cannot be modified through a shared borrow
+
+**Exclusive borrow (`&mut T`):**
+- Only one exclusive borrow can exist at a time
+- No shared borrows can coexist with an exclusive borrow
+- The referent can be modified through an exclusive borrow
+
+**Rule 1: At any given time, you can have EITHER one exclusive borrow OR any number of shared borrows.**
+
+```
+let mut s = String::from("hello");
+
+// Multiple shared borrows — OK
+let r1 = &s;
+let r2 = &s;
+println!("{r1} {r2}");
+
+// Exclusive borrow — OK (no shared borrows active)
+let r3 = &mut s;
+r3.push_str(" world");
+println!("{r3}");
+```
+
+**Rule 2: Borrows must not outlive the referent.**
+
+```
+let r;
+{
+    let s = String::from("hello");
+    r = &s;         // ERROR: s does not live long enough
+}   // s is dropped here
+// r would be a dangling reference
+```
+
+**Rule 3: A borrow scope is from the borrow point to the last use.**
+
+```
+let mut s = String::from("hello");
+
+let r1 = &s;
+let r2 = &s;        // r1 and r2 coexist — OK
+println!("{r1} {r2}");
+// r1 and r2 are no longer used after this point
+
+let r3 = &mut s;    // OK: r1 and r2 are no longer active
+r3.push_str(" world");
+println!("{r3}");
+```
+
+### 13.5 Borrowing in Practice
+
+**Function parameters:**
+
+```
+fn inspect(s: &String) {        // shared borrow
+    println!("{s}");
+}
+
+fn modify(s: &mut String) {     // exclusive borrow
+    s.push_str(" world");
+}
+
+fn take(s: String) {            // ownership transfer
+    // s is consumed
+}
+
+let mut name = String::from("Nexus");
+
+inspect(&name);         // borrows name shared
+modify(&mut name);      // borrows name exclusively
+take(name);             // moves name
+// name is no longer valid
+```
+
+**Method calls:**
+
+```
+let mut v = Vector::new();
+v.push(1);              // borrows v exclusively (push takes &mut self)
+let len = v.len();      // borrows v shared (len takes &self)
+```
+
+### 13.6 Dangling References
+
+The compiler prevents dangling references — references that point to freed memory:
+
+```
+fn dangling() -> &String {      // ERROR: missing lifetime annotation
+    let s = String::from("hello");
+    &s      // s is dropped when function returns; reference would dangle
+}
+```
+
+**Solution:** Return ownership, not a reference:
+
+```
+fn not_dangling() -> String {
+    let s = String::from("hello");
+    s       // ownership transfers to caller
+}
+```
+
+### 13.7 Self-Referential Types
+
+Self-referential types (a struct that contains a reference to its own field) are not permitted in safe Nexus. The ownership system prevents creating such types because the borrow checker cannot express the relationship between the two fields.
+
+**Workaround:** Use indices instead of references:
+
+```
+// INVALID:
+struct Bad {
+    data: String,
+    slice: &str,        // reference into data — NOT ALLOWED
+}
+
+// VALID:
+struct Good {
+    data: String,
+    start: usize,
+    end: usize,         // indices into data
+}
+```
+
+### 13.8 Interior Mutability
+
+Some types allow mutation through a shared reference. This is handled through special wrapper types (planned for future spec versions):
+
+```
+let cell = Cell::new(5);
+let ref_cell = RefCell::new(String::from("hello"));
+
+// Cell: copy-based interior mutability (no borrow checking at runtime)
+cell.set(10);
+let val = cell.get();
+
+// RefCell: runtime borrow checking
+{
+    let mut borrowed = ref_cell.borrow_mut();
+    borrowed.push_str(" world");
+}   // mutable borrow dropped here
+let borrowed = ref_cell.borrow();
+println!("{borrowed}");
+```
+
+### 13.9 Drop Semantics
+
+When a value is dropped (goes out of scope or is explicitly consumed), its `drop` method is called. Drop order:
+
+1. Local variables are dropped in reverse declaration order
+2. Struct fields are dropped in declaration order
+3. Enum variant data is dropped
+4. Heap-allocated memory is freed
+
+```
+struct Resource {
+    name: String,
+}
+
+impl Drop for Resource {
+    fn drop(&mut self) {
+        println!("Dropping resource: {self.name}");
+    }
+}
+
+{
+    let a = Resource { name: "first".into() };
+    let b = Resource { name: "second".into() };
+}   // b is dropped first, then a
+// Output:
+// Dropping resource: second
+// Dropping resource: first
+```
+
+### 13.10 Unsafe Escape Hatch
+
+The `unsafe` block disables borrow checking for specific operations:
+
+```
+unsafe {
+    let raw = &mut value as *mut i32;
+    *raw = 42;          // write through raw pointer
+}
+```
+
+**Operations that require `unsafe`:**
+- Dereferencing raw pointers
+- Calling unsafe functions
+- Accessing mutable static variables
+- Implementing unsafe traits
+- Accessing fields of a union
+
+**Rules:**
+- `unsafe` does not disable all checks — only borrow checking
+- Bounds checking, overflow checking, and type checking still apply
+- `unsafe` blocks should be as small as possible
+- All `unsafe` code should have a comment explaining why it is safe
+
+---
+
+## 14. Lifetime Inference
+
+Lifetimes describe the scope for which a reference is valid. Nexus uses lifetime inference to minimize explicit annotations while preventing dangling references.
+
+### 14.1 Lifetime Basics
+
+A lifetime is a stretch of code for which a reference is guaranteed to be valid:
+
+```
+{
+    let r;                 // ------+-- 'a: lifetime of r
+    {                       //       |
+        let x = 5;         // --+   |
+        r = &x;            //   |   |  'b: lifetime of x
+    }                       // --+   |  x goes out of scope
+    // println!("{r}");     //       |  ERROR: x does not live long enough
+}                           // ------+
+```
+
+### 14.2 Lifetime Annotations
+
+Lifetime annotations are written as `'name`:
+
+```
+&'a T        // reference with lifetime 'a
+&'a mut T    // mutable reference with lifetime 'a
+```
+
+**Lifetime annotations do not change how long references live.** They describe relationships between lifetimes of multiple references.
+
+### 14.3 Lifetime Elision Rules
+
+The compiler infers lifetimes in common patterns. Explicit annotations are only needed when the compiler cannot determine the relationship.
+
+**Elision rule 1: Each reference parameter gets its own lifetime.**
+
+```
+// Written:
+fn foo(x: &str, y: &str) -> &str { ... }
+
+// Elided to:
+fn foo<'a, 'b>(x: &'a str, y: &'b str) -> &str { ... }
+```
+
+**Elision rule 2: If there is exactly one input lifetime, it is assigned to all output lifetimes.**
+
+```
+// Written:
+fn first(s: &str) -> &str { ... }
+
+// Elided to:
+fn first<'a>(s: &'a str) -> &'a str { ... }
+```
+
+**Elision rule 3: If one of the parameters is `&self` or `&mut self`, the lifetime of `self` is assigned to all output lifetimes.**
+
+```
+// Written:
+impl Foo {
+    fn bar(&self, x: &str) -> &str { ... }
+}
+
+// Eladed to:
+impl Foo {
+    fn bar<'a, 'b>(&'a self, x: &'b str) -> &'a str { ... }
+}
+```
+
+**When elision fails:** The compiler requires explicit annotations:
+
+```
+// ERROR: cannot infer lifetime
+fn longest(x: &str, y: &str) -> &str {
+    if x.len() > y.len() { x } else { y }
+}
+
+// FIXED: output lifetime is min of input lifetimes
+fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {
+    if x.len() > y.len() { x } else { y }
+}
+```
+
+### 14.4 Lifetime Inference Algorithm
+
+The compiler uses the following algorithm:
+
+1. **Assign lifetimes to all reference parameters** (each gets a unique lifetime)
+2. **Apply elision rules** to determine output lifetimes
+3. **Unify lifetimes** based on constraints:
+   - If `&'a T` is assigned to `&'b T`, then `'a >= 'b` (the reference must live at least as long as the binding)
+   - If `&'a T` is returned, then `'a` must outlive the function call
+4. **Solve the constraint system** to find the minimal lifetime assignments
+5. **Report errors** if constraints cannot be satisfied
+
+### 14.5 Lifetime Bounds
+
+Lifetime bounds specify relationships between lifetimes:
+
+```
+T: 'a           // T must outlive lifetime 'a
+T: 'static      // T must live for the entire program
+&'a T: 'b       // the reference &'a T must outlive 'b
+```
+
+**Common patterns:**
+
+```
+// Bounded by a specific lifetime
+fn parse<'input, 'alloc>(input: &'input str, alloc: &'alloc Allocator) -> AST<'input>
+where
+    'alloc: 'input,    // allocator outlives the input
+{ ... }
+
+// Static lifetime (lives forever)
+let s: &'static str = "hello";     // string literal is static
+```
+
+### 14.6 Higher-Ranked Lifetimes
+
+For closures and trait objects that need to work with any lifetime:
+
+```
+// For any lifetime 'a, this function takes &'a str
+fn for_all<'a>(f: impl for<'a> Fn(&'a str) -> &'a str) { ... }
+
+// Equivalent to:
+// f must work with any lifetime 'a
+```
+
+### 14.7 Lifetime Subtyping
+
+Lifetime `'a` is a subtype of `'b` (written `'a: 'b`) if `'a` is at least as long as `'b`. This means anything valid for `'b` is also valid for `'a`.
+
+```
+'static: 'a        // 'static outlives any 'a
+'a: 'b             // if 'a outlives 'b, then &'a T can be used where &'b T is expected
+```
+
+**Covariance:** If `'a: 'b`, then `&'a T` can be used where `&'b T` is expected (for shared references).
+
+**Invariance:** `&'a mut T` is invariant in its lifetime — you cannot substitute a longer lifetime for a shorter one (or vice versa) for mutable references.
+
+### 14.8 Common Lifetime Patterns
+
+**Pattern 1: Output outlives inputs**
+
+```
+fn get_ref(data: &Data) -> &Item {
+    &data.items[0]     // returned reference lives as long as data
+}
+```
+
+**Pattern 2: Multiple inputs, shared output lifetime**
+
+```
+fn merge<'a>(a: &'a str, b: &'a str) -> String {
+    format!("{a}{b}")  // returns owned String, no lifetime issue
+}
+```
+
+**Pattern 3: Struct with references**
+
+```
+struct Excerpt<'a> {
+    text: &'a str,      // excerpt borrows from the original string
+}
+
+let novel = String::from("Call me Ishmael.");
+let excerpt = Excerpt { text: &novel[..15] };
+```
+
+**Pattern 4: Closures with lifetimes**
+
+```
+fn apply<F>(data: &str, f: F) -> &str
+where
+    F: Fn(&str) -> &str,
+{
+    f(data)
+}
+```
+
+### 14.9 Common Lifetime Errors
+
+**Error 1: Reference does not live long enough**
+
+```
+fn get_ref() -> &str {
+    let s = String::from("hello");
+    &s      // ERROR: s is dropped when function returns
+}
+```
+
+**Fix:** Return owned data, or take a parameter.
+
+**Error 2: Cannot infer lifetime**
+
+```
+fn pick(a: &str, b: &str) -> &str {
+    if condition { a } else { b }
+}
+```
+
+**Fix:** Add lifetime annotation: `fn pick<'a>(a: &'a str, b: &'a str) -> &'a str`
+
+**Error 3: Mutable reference outlives borrow**
+
+```
+let mut data = vec![1, 2, 3];
+let first = &data[0];      // shared borrow
+data.push(4);              // ERROR: cannot modify while borrowed
+println!("{first}");
+```
+
+**Fix:** End the borrow before modifying:
+
+```
+let mut data = vec![1, 2, 3];
+let first = data[0];       // copy the value (i32 is Copy)
+data.push(4);              // OK: no active borrows
+println!("{first}");
+```
+
+---
+
+## 15. Semantics
+
+This section defines the runtime behavior of Nexus programs.
+
+### 15.1 Evaluation Order
+
+Nexus defines a strict evaluation order for expressions:
+
+**Function arguments:** Evaluated left to right.
+
+```
+foo(a(), b(), c())    // a() is called first, then b(), then c()
+```
+
+**Binary operators:** Left operand is evaluated before right operand.
+
+```
+a + b    // a is evaluated first, then b
+```
+
+**Short-circuit operators:** Right operand is not evaluated if the left determines the result.
+
+```
+x && y    // if x is false, y is not evaluated
+x || y    // if x is true, y is not evaluated
+```
+
+**Match expressions:** Scrutinee is evaluated first, then patterns are tried top to bottom.
+
+```
+match compute() {       // compute() is called first
+    Pattern1 => ...,    // Pattern1 is tried first
+    Pattern2 => ...,    // Pattern2 is tried if Pattern1 fails
+}
+```
+
+**If expressions:** Condition is evaluated first.
+
+```
+if condition { ... }    // condition is evaluated first
+```
+
+**Let bindings:** Right-hand side is evaluated first.
+
+```
+let x = compute();     // compute() is called, then x is bound
+```
+
+**Block expressions:** Statements are evaluated in order; the final expression is the value.
+
+```
+{
+    a();                // evaluated first
+    b();                // evaluated second
+    c()                 // evaluated third; its value is the block's value
+}
+```
+
+### 15.2 Drop Order
+
+Values are dropped in reverse declaration order (stack-like):
+
+```
+{
+    let a = Resource("first");
+    let b = Resource("second");
+    let c = Resource("third");
+}   // drop order: c, b, a
+```
+
+**Struct fields** are dropped in declaration order:
+
+```
+struct Foo {
+    a: Resource,
+    b: Resource,
+}
+// drop order: a, then b
+```
+
+**Enum variants** are dropped when the enum value is dropped.
+
+### 15.3 Error Handling Semantics
+
+**`Result<T, E>` propagation:**
+
+```
+fn read_file(path: &str) -> Result<String> {
+    let content = fs::read_to_string(path)?;  // if Err, returns Err immediately
+    Ok(content)
+}
+```
+
+The `?` operator desugars to:
+
+```
+match result {
+    Ok(value) => value,
+    Err(e) => return Err(From::from(e)),
+}
+```
+
+**`?T` (nullable) propagation:**
+
+```
+fn get_name(id: u64) -> ?String {
+    let user = find_user(id)?;    // if null, returns null
+    Some(user.name)
+}
+```
+
+The `?` operator on nullable types desugars to:
+
+```
+match option {
+    Some(value) => value,
+    null => return null,
+}
+```
+
+### 15.4 Concurrency Semantics
+
+**`parallel` blocks:**
+
+```
+parallel {
+    let a = fetch(url_a);    // spawned on thread 1
+    let b = fetch(url_b);    // spawned on thread 2
+}   // join: waits for both to complete
+// a and b are both available
+```
+
+- Each statement in a `parallel` block is executed concurrently
+- The block acts as a join point — execution continues only after all statements complete
+- If any statement panics or returns an error, all other statements are cancelled
+- Variables bound inside `parallel` are accessible after the block
+
+**`async`/`await`:**
+
+```
+async fn fetch_all(urls: Vec<&str>) -> Vec<Data> {
+    let futures: Vec<_> = urls.iter().map(|url| fetch(url)).collect();
+    let results = join_all(futures).await;
+    results
+}
+```
+
+- `async` functions return `Future` objects
+- `.await` pauses execution until the future resolves
+- The runtime polls futures and drives them to completion
+- Multiple futures can be concurrent via `join!` or `join_all!`
+
+### 15.5 Panic Semantics
+
+When a panic occurs:
+
+1. The current function is unwound (local variables are dropped in reverse order)
+2. The panic propagates to the calling function
+3. This continues until `main` is reached
+4. The process exits with a non-zero status code
+
+```
+fn might_panic() {
+    panic!("something went wrong");    // unwinds the stack
+}
+
+fn main() {
+    might_panic();     // panic propagates to main
+    // program exits
+}
+```
+
+**Catch panics:**
+
+```
+match std::panic::catch_unwind(|| {
+    might_panic();
+}) {
+    Ok(()) => println!("no panic"),
+    Err(e) => println!("caught panic: {e:?}"),
+}
+```
+
+### 15.6 Arithmetic Semantics
+
+**Integer overflow:**
+- Debug mode: panic on overflow
+- Release mode: wrapping arithmetic (two's complement)
+- Explicit checked/wrapping/saturating operations available
+
+```
+let x: u8 = 255;
+let y = x + 1;         // debug: panic; release: wraps to 0
+let z = x.wrapping_add(1);  // always wraps
+let w = x.checked_add(1);   // returns ?u8: None on overflow
+let v = x.saturating_add(1); // returns 255 (saturates at max)
+```
+
+**Division by zero:**
+- Integer division by zero: runtime panic
+- Float division by zero: produces infinity or NaN (IEEE 754)
+
+---
+
+## 16. Runtime Specification
+
+This section defines the memory layout, calling conventions, and runtime behavior of Nexus programs.
+
+### 16.1 Memory Layout
+
+**Primitive types:**
+
+| Type | Size (bytes) | Alignment |
+|------|-------------|-----------|
+| `bool` | 1 | 1 |
+| `char` | 4 | 4 |
+| `u8`–`u128` | 1–16 | same as size |
+| `i8`–`i128` | 1–16 | same as size |
+| `f32` | 4 | 4 |
+| `f64` | 8 | 8 |
+| `()` | 0 | 1 |
+| `*const T` | pointer size | pointer size |
+| `*mut T` | pointer size | pointer size |
+| `&T` | pointer size | pointer size |
+| `&mut T` | pointer size | pointer size |
+
+**Compound types:**
+
+| Type | Size | Alignment |
+|------|------|-----------|
+| `(A, B)` | sum of field sizes + padding | max field alignment |
+| `[T; N]` | N × size_of(T) | alignment of T |
+| `struct` | sum of field sizes + padding | max field alignment |
+| `enum` | tag size + max variant size + padding | max field alignment |
+
+**Struct layout:**
+
+```
+struct Point {     // size: 16 bytes, alignment: 8
+    x: f64,        // offset: 0, size: 8
+    y: f64,        // offset: 8, size: 8
+}
+
+struct Padded {    // size: 16 bytes, alignment: 8
+    a: u8,         // offset: 0, size: 1
+    b: u64,        // offset: 8, size: 8 (aligned to 8)
+    c: u8,         // offset: 16, size: 1
+    // padding: 7 bytes to reach alignment
+}
+```
+
+**Enum layout:**
+
+```
+enum Shape {           // size: 24 bytes (tag + largest variant)
+    Circle(f64),       // variant 0: 8 bytes
+    Rectangle(f64, f64), // variant 1: 16 bytes
+}
+// tag: 4 bytes (i32)
+// padding: 4 bytes (alignment)
+// data: 16 bytes (largest variant)
+```
+
+### 16.2 Stack and Heap
+
+**Stack:**
+- Local variables are allocated on the stack
+- Stack allocation is just a pointer bump (very fast)
+- Stack-allocated values are automatically dropped when they go out of scope
+- Stack size is typically 1–8 MB per thread
+
+**Heap:**
+- `String`, `Vector`, and other owned types allocate on the heap
+- Heap allocation uses the system allocator (malloc/free) or a custom allocator
+- Heap-allocated values are dropped when their owner goes out of scope
+- Arena allocation allocates from a bulk pool and frees all at once
+
+**Ownership determines drop location:**
+- Stack values: dropped when the variable goes out of scope
+- Heap values: the heap memory is freed when the owner is dropped
+- Arena values: freed when the arena scope ends
+
+### 16.3 Calling Conventions
+
+Nexus uses the platform's default calling convention:
+
+**System V AMD64 ABI (Linux, macOS):**
+- First 6 integer/pointer arguments: `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9`
+- First 8 float arguments: `xmm0`–`xmm7`
+- Return value: `rax` (integer) or `xmm0` (float)
+- Stack alignment: 16 bytes before `call`
+
+**Windows x64 ABI:**
+- First 4 integer/pointer arguments: `rcx`, `rdx`, `r8`, `r9`
+- First 4 float arguments: `xmm0`–`xmm3`
+- Return value: `rax` (integer) or `xmm0` (float)
+- Shadow space: 32 bytes reserved by caller
+
+**Function call example:**
+
+```
+fn add(a: i32, b: i32) -> i32 {
+    a + b
+}
+
+// Compiled (System V):
+// a in edi, b in esi
+// result returned in eax
+// add(3, 5) → mov edi, 3; mov esi, 5; call add; result in eax
+```
+
+### 16.4 Error Propagation
+
+**Result<T, E> representation:**
+
+```
+// Result<T, E> is represented as a tagged union:
+struct Result<T, E> {
+    tag: u8,        // 0 = Ok, 1 = Err
+    data: union {
+        ok: T,
+        err: E,
+    },
+}
+```
+
+**Setjmp/longjmp for error propagation (C backend):**
+
+When transpiling to C, the `?` operator uses `setjmp`/`longjmp` for non-local returns:
+
+```
+// Nexus:
+fn read_file(path: &str) -> Result<String> {
+    let content = fs::read_to_string(path)?;
+    Ok(content)
+}
+
+// C transpilation:
+Result read_file(const char* path) {
+    jmp_buf jump_buffer;
+    if (setjmp(jump_buffer) != 0) {
+        return Err(/* captured error */);
+    }
+    String content = fs_read_to_string(path, &jump_buffer);
+    return Ok(content);
+}
+```
+
+### 16.5 Startup Sequence
+
+1. **Runtime initialization:** Initialize the allocator, thread pool, and async runtime (if used)
+2. **Static initialization:** Initialize static variables and constants
+3. **Call `main`:** Execute the `main` function
+4. **Exit:** Return the exit code from `main` (0 on success, non-zero on error)
+
+### 16.6 Minimum Runtime Library
+
+The Nexus runtime library is minimal (~1-2K lines of C):
+
+```
+runtime/
+├── alloc.c         // memory allocation (malloc wrapper or custom allocator)
+├── panic.c         // panic handling (print message, unwind stack)
+├── io.c            // basic I/O (stdout, stderr)
+├── string.c        // string operations (concat, format)
+├── result.c        // Result type support (setjmp/longjmp for C backend)
+└── runtime.h       // runtime API
+```
+
+**No garbage collector.** No reference counting. No hidden runtime calls. All memory management is explicit through ownership.
+
+### 16.7 FFI Calling Convention
+
+When calling C functions from Nexus:
+
+```
+extern "C" {
+    fn printf(format: *const u8, ...) -> i32;
+}
+
+// Nexus passes arguments according to the C ABI
+// The compiler generates appropriate marshaling code
+```
+
+**Rules:**
+- Nexus types are mapped to C types:
+  - `i32` → `int32_t`
+  - `u64` → `uint64_t`
+  - `bool` → `uint8_t` (0 or 1)
+  - `&T` → `T*` (const pointer)
+  - `&mut T` → `T*` (mutable pointer)
+  - `String` → `{ char* ptr; size_t len; }`
+  - `Vector<T>` → `{ T* ptr; size_t len; size_t cap; }`
+- C functions are implicitly `unsafe`
+- No closures or owned types across FFI boundary
+
+---
+
+*End of Language Specification*
