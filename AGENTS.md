@@ -5,7 +5,7 @@
 **Nexus** is an experimental systems programming language designed for AI agent systems. It targets C-level performance with compile-time memory safety, no garbage collection, and purpose-built syntax for agent workflows.
 
 **Repository:** `git@github.com:preciousnwankwo/nexus.git`
-**Status:** Phase 1 — Formal Language Specification
+**Status:** Phase 1 — Bootstrap Compiler Expansion
 **File extension:** `.nx`
 
 ## Language Design
@@ -17,6 +17,7 @@
 - **Bootstrap:** Nexus-0 (C) → Nexus-v1 (self-hosting) → Nexus-v2 (LLVM)
 - **Toolchain:** Written entirely in C/assembly — no Rust dependency
 - **FFI:** First-class C interop via libclang-based bindgen
+- **Agent primitives:** `|=>` pipeline operator, `parallel` blocks, MCP native support
 
 ## Key Syntax
 
@@ -49,50 +50,70 @@ parallel {
 
 | Phase | Description | Status |
 |---|---|---|
-| 1 | Formal Language Specification | **Current** |
-| 2 | Bootstrap Compiler (C) | Pending |
-| 3 | Memory Safety (ownership/borrowing) | Pending |
-| 4 | Full Type System (HM inference) | Pending |
-| 5 | LLVM Backend | Pending |
-| 6 | Self-Hosting | Pending |
-| 7 | Transpilation & FFI | Pending |
-| 8 | AI-Agent Features | Pending |
-| 9 | Tooling & Ecosystem | Pending |
+| 1 | Bootstrap Compiler (C) | **CURRENT** — Working, expanding |
+| 2 | Agent Primitives (`\|=>`, `parallel`, MCP) | Pending |
+| 3 | Self-Hosting | Pending |
+| 4 | LLVM Backend | Pending |
+| 5 | Ecosystem & Tooling | Pending |
 
-## Current Work
+## Current State
 
-Writing the formal language specification (`spec/nexus-spec.md`, target ~100-200 pages). The whitepaper (`nexus-whitepaper.md`) and development plan (`plan/nexus-plan.md`) are the foundation.
-
-No compiler code exists yet. The spec must be complete before implementation begins.
+The bootstrap compiler (`src/bootstrap/`) is ~3,200 lines of C and WORKS:
+- Lexer, parser, type checker, codegen all functional
+- Compiles `.nx` files to C code
+- Successfully runs: fibonacci, loops, structs, enums, ownership examples
+- Build: `make` → `build/nexus-bootstrap`
+- Test: `./build/nexus-bootstrap examples/hello.nx /tmp/out.c && cc -std=c11 /tmp/out.c src/runtime/runtime.c -o /tmp/out -I src/runtime && /tmp/out`
 
 ## Project Structure
 
 ```
 nexus/
 ├── AGENTS.md                  # This file
+├── VISION.md                  # Comprehensive vision document
 ├── nexus-whitepaper.md        # Language design whitepaper
-├── plan/
-│   └── nexus-plan.md          # Detailed development plan
-├── mcp/
-│   └── nexus-agent/           # nexus-planner MCP agent
-│       ├── server.py           # MCP server entry point
-│       ├── git_tools.py        # Git operations
-│       ├── build_tools.py      # Build/source tools
-│       ├── nexus_context.py    # Project context loader
-│       └── pyproject.toml      # Python dependencies
-└── .gitignore
+├── spec/nexus-spec.md         # Formal language specification (3,479 lines)
+├── src/
+│   ├── bootstrap/             # Nexus-0 compiler (C)
+│   │   ├── lexer.c/h          # Tokenizer
+│   │   ├── parser.c/h         # Recursive descent + Pratt parser
+│   │   ├── ast.c/h            # AST definitions
+│   │   ├── typecheck.c/h      # Type checker
+│   │   ├── codegen.c/h        # C code generator
+│   │   ├── symbol_table.c/h   # Symbol table
+│   │   ├── string_table.c/h   # String interning
+│   │   ├── arena.c/h          # Arena allocator
+│   │   └── main.c             # Entry point
+│   └── runtime/               # Runtime library
+│       ├── runtime.c          # String, slice, I/O builtins
+│       └── runtime.h
+├── examples/
+│   ├── hello.nx               # Fibonacci + loops (working)
+│   ├── ownership.nx           # Ownership examples (working)
+│   └── full.nx                # Structs, enums, functions (working)
+├── mcp/nexus-agent/           # MCP server for AI agents
+├── tests/                     # Test suite
+└── Makefile
 ```
 
 ## Conventions
 
 - **Commits:** Conventional commits — `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`
-- **Agent commits:** Use identity `nexus-planner` / `nexus-planner@nexus.local`
+- **Agent commits:** Use identity `fisher` / `fisher@owl-audit`
 - **Push safety:** Main/master blocked by default
 - **Merge conflicts:** Manual resolution (agent fails on conflict)
 
+## Key Design Decisions
+
+1. **Simplified ownership vs Rust:** 80% fewer lifetime annotations through better inference
+2. **No Pin/Unpin:** Arena allocation replaces self-referential types (avoids Rust's 99+ open soundness issues)
+3. **Agent primitives are language features:** Not libraries — `|=>`, `parallel`, MCP are built-in
+4. **Bootstrap from C:** Proven approach (Zig, C, Go all did this)
+5. **Fast compilation target:** <1s incremental builds (like Go, not Rust)
+
 ## Using the nexus-planner Agent
 
-The MCP server at `mcp/nexus-agent/server.py` exposes 16 tools for any MCP-compatible AI agent.
+The MCP server at `mcp/nexus-agent/server.py` exposes tools for any MCP-compatible AI agent.
 
 ### Setup
 
@@ -103,48 +124,16 @@ source .venv/bin/activate
 pip install "mcp[cli]"
 ```
 
-### Connect from any MCP client
-
-```json
-{
-  "mcpServers": {
-    "nexus": {
-      "command": "python3",
-      "args": ["/Users/ibold/Programming/experiment/nexus/mcp/nexus-agent/server.py"]
-    }
-  }
-}
-```
-
 ### Available Tools
 
 | Tool | Description |
 |---|---|
 | `git_status_tool` | Working tree status |
 | `git_diff_tool` | Unstaged changes |
-| `git_diff_staged_tool` | Staged changes |
-| `git_log_tool` | Recent commits |
-| `git_show_commit_tool` | Specific commit diff |
-| `git_branch_list_tool` | List branches |
-| `git_branch_create_tool` | Create branch |
-| `git_branch_delete_tool` | Delete branch |
-| `git_preview_commit_tool` | **Preview commit before confirming** |
 | `git_commit_tool` | Stage and commit |
 | `git_push_tool` | Push to origin (blocks main) |
-| `git_pull_tool` | Pull with rebase |
-| `git_stash_tool` | Stash changes |
-| `git_stash_pop_tool` | Pop stash |
-| `git_checkout_tool` | Switch branches |
 | `read_source_file_tool` | Read repo file |
 | `list_source_files_tool` | List files by pattern |
 | `get_project_structure_tool` | Directory tree |
 | `run_make_tool` | Run make targets |
-
-### Commit Workflow
-
-1. Agent calls `git_preview_commit_tool("message")` — shows diff and proposed commit
-2. User reviews the output
-3. Agent calls `git_commit_tool("message")` — stages and commits
-4. Agent calls `git_push_tool(branch="feature-x")` — pushes to origin
-
-Main branch is blocked. Use `force=True` to override.
+| ... | (16 total tools) |
